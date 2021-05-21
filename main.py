@@ -5,8 +5,8 @@ from pathlib import Path
 from tkinter import Tk
 from tkinter.filedialog import askdirectory
 from tkinter.messagebox import askyesno
-from typing import Dict, List
-from FileMove import RecvProcess, client_path_tree, SendProcess
+from typing import Dict, List, Union
+from FileMove import RecvProcess, SendProcess
 from NetIO import NetIO, LOG, pretty_byecount
 
 
@@ -26,11 +26,14 @@ class Config:
 
 
 def run_server(config: Config) -> None:
+    """Run server core communication mainloop
+
+    Args:
+        config (Config): connection configuration
+    """
     client = NetIO.accept(config.ip, config.port, config.key)
     LOG.info(f"Successfully connected with {config.ip}:{config.port}")
-    root = Tk()
-    root.wm_attributes("-topmost", 1)
-    root.withdraw()
+    initTkinter()
     while (meta := client.recvM()) and meta.paths is not None:
         if askyesno(
             "Incomeing files",
@@ -43,7 +46,7 @@ def run_server(config: Config) -> None:
             ):
                 client.sendM(accept=True)
                 try:
-                    batch_recv_files(config, client, meta, root_dir)
+                    batch_recv_files(config, client, meta.paths, root_dir)
                 finally:
                     validate_recved(incomeing_paths, root_dir)
         else:
@@ -58,13 +61,28 @@ def validate_recved(incomeing_paths, root_dir):
                 f"Cloning of {relapth} probalby failed as it's size is {pretty_byecount(real_size)} instead of {pretty_byecount(size)} ({pretty_byecount(size-real_size)} difference)"
             )
         else:
-            LOG.info(f"Successfully cloned {relapth} with all it's contents ({pretty_byecount(real_size)}/{pretty_byecount(size)})")
+            LOG.info(
+                f"Successfully cloned {relapth} with all it's contents ({pretty_byecount(real_size)}/{pretty_byecount(size)})"
+            )
 
 
-def batch_recv_files(config, client, meta, root_dir):
+def batch_recv_files(
+    config: Config,
+    client: NetIO,
+    paths: Dict[str, int],
+    root_dir: Union[str, Path],
+):
+    """Schedule a batch file receiving process
+
+    Args:
+        config (Config): connection configuration
+        client (NetIO): main communication NetIO object
+        meta (Metadata): metadata object containing path dictionary
+        root_dir ([type]): [description]
+    """
     tasks = [dict() for _ in range(PROCESS_COUNT)]
-    for i, key in enumerate(meta.paths.keys()):
-        tasks[i % PROCESS_COUNT][key] = meta.paths[key]
+    for i, key in enumerate(paths.keys()):
+        tasks[i % PROCESS_COUNT][key] = paths[key]
     processes: List[RecvProcess] = []
     for i in range(PROCESS_COUNT):
         processes.append(
@@ -85,13 +103,16 @@ def batch_recv_files(config, client, meta, root_dir):
 
 
 def run_client(config: Config) -> None:
+    """Start client main process with its mainloop
+
+    Args:
+        config (Config): connection configuration
+    """
     server = NetIO.connect(config.ip, config.port, config.key)
     LOG.info(f"Successfully connected to {config.ip}:{config.port}")
-    root = Tk()
-    root.wm_attributes("-topmost", 1)
-    root.withdraw()
+    initTkinter()
     while root_dir := askdirectory(title="Select directory to clone", initialdir="/"):
-        paths = {
+        paths: Dict[str:int] = {
             str(Path(path).relative_to(root_dir)): os.path.getsize(path)
             for path in Path(root_dir).glob("**/*")
             if Path(path).is_file()
@@ -99,7 +120,7 @@ def run_client(config: Config) -> None:
         server.sendM(paths=paths)
         server.socket.settimeout(None)
         if (meta := server.recvM()) and meta.accept:
-            tasks = [dict() for _ in range(PROCESS_COUNT)]
+            tasks: List[Dict[str, int]] = [dict() for _ in range(PROCESS_COUNT)]
             for i, key in enumerate(paths.keys()):
                 tasks[i % PROCESS_COUNT][key] = paths[key]
             if (meta := server.recvM()) and meta.ready:
@@ -112,7 +133,28 @@ def run_client(config: Config) -> None:
         server.sendM(paths=None)
 
 
-def batch_send_files(config, root_dir, tasks):
+def initTkinter() -> Tk:
+    """Initialize tkinter root, make it topmost and withdraw it."""
+    root = Tk()
+    root.wm_attributes("-topmost", 1)
+    root.withdraw()
+    return root
+
+
+def batch_send_files(
+    config: Config,
+    root_dir: Union[Path, str],
+    tasks: List[Dict[str, int]],
+):
+    """Schedule file sending processes, they will
+    take up ports from config.port up to
+    config.port + 1 + THREAD_COUNT * PROCESS_COUNT
+
+    Args:
+        config ([type]): connection configuration
+        root_dir (Union[Path, str]): file paths root directory
+        tasks (List[Dict[str, int]]): list of dictionatries of tasks to be given to threads
+    """
     processes: List[SendProcess] = []
     for i in range(PROCESS_COUNT):
         processes.append(
@@ -131,7 +173,16 @@ def batch_send_files(config, root_dir, tasks):
         p.join()
 
 
-def getConfig(source: str) -> SectionProxy:
+def getConfig(source: Union[str, Path]) -> Config:
+    """Create default configuration and update it with
+    data fetched from local ini file.
+
+    Args:
+        source (Union[str, Path]): path to source *.ini file
+
+    Returns:
+        Config: Ready to use configuration
+    """
     config = ConfigParser()
     config["Aniotransfer"] = {
         "ip": "0.0.0.0",
