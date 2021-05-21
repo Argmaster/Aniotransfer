@@ -4,11 +4,11 @@ import re
 import socket as so
 import struct
 import sys
+import time
 import zlib
 from io import BytesIO
 from math import inf
 from typing import Any, Dict, List, Tuple, Union
-import time
 
 from Crypto.Cipher import AES
 from Crypto.Hash import SHA256
@@ -393,6 +393,7 @@ class NetIO:
     __repr__ = __str__
 
     def __del__(self) -> None:
+        """Close associated socket"""
         try:
             self.socket.shutdown(so.SHUT_RDWR)
             self.socket.close()
@@ -401,18 +402,38 @@ class NetIO:
             LOG.debug(f"Failed to manually close NetIO socket: {e}")
 
     def read(self, number: int) -> bytes:
+        """Read portion of bytes from associated socket,
+        It will always either raise an exception or
+        return block of expected size.
+
+        Args:
+            number (int): how many bytes to read
+
+        Returns:
+            bytes: raw bytes
+        """
         _buffer = bytearray()
         while len(_buffer) != number:
             _buffer.extend(self.socket.recv(number - len(_buffer)))
         return bytes(_buffer)
 
     def recv(self) -> Message:
+        """Receive message and return it as-is
+
+        Returns:
+            Message: message object
+        """
         LOG.debug(f"Receiving object")
         obj = Message.fromBytesIO(self, self.key)
         LOG.debug(f"Received {obj}")
         return obj
 
     def recvM(self) -> Metadata:
+        """Receive message, extract and return message header
+
+        Returns:
+            Metadata: message header object
+        """
         LOG.debug(f"Receiving object")
         obj = Message.fromBytesIO(self, self.key)
         LOG.debug(f"Received {obj}")
@@ -421,12 +442,23 @@ class NetIO:
     def send(
         self, metadata: Dict[str, any] = None, payload: Union[str, bytes] = None
     ) -> None:
+        """Send message object with custom metadata and payload
+
+        Args:
+            metadata (Dict[str, any], optional): message header. Defaults to None.
+            payload (Union[str, bytes], optional): message body. Defaults to None.
+        """
         message = Message(metadata, payload, self.key)
         LOG.debug(f"Sending {message}")
         self.socket.sendall(message.toBytes())
         LOG.debug(f"Sending finished")
 
     def sendM(self, **metakwargs: Any) -> None:
+        """Send message object with custom metadata and empty body
+
+        Kwrgs:
+            metakwargs (Dict[str, any], optional): message header. Defaults to None.
+        """
         message = Message(metakwargs, None, self.key)
         LOG.debug(f"Sending {message}")
         self.socket.sendall(message.toBytes())
@@ -434,7 +466,10 @@ class NetIO:
 
     @staticmethod
     def connect(
-        ip: str, port: int, key: Union[str, bytes], *,
+        ip: str,
+        port: int,
+        key: Union[str, bytes],
+        *,
         timeout: float = None,
     ) -> "NetIO":
 

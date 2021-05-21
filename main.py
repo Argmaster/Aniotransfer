@@ -176,6 +176,7 @@ if __name__ == "__main__":
             "--loglvl",
             choices=("CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"),
             default="WARNING",
+            type=lambda s: s.upper(),
             help="Logging level",
         )
         return parser.parse_args(src)
